@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0A0A10;
+  --color-foreground: #ededed;
+  
+  --color-neon-violet: #9D4EDD;
+  --color-neon-pink: #FF66B2;
+  --color-dark-purple: #10002B;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: Arial, Helvetica, sans-serif;
+  }
+}
+
+@layer utilities {
+  .glow-border {
+    box-shadow: 0 0 10px rgba(157, 78, 221, 0.5), 0 0 2px rgba(255, 102, 178, 0.3);
+    border: 1px solid rgba(157, 78, 221, 0.3);
+  }
+}

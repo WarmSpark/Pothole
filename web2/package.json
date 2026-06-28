@@ -1,0 +1,43 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
+    "@livekit/components-react": "^2.9.21",
+    "@movie-web/providers": "^2.4.13",
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "framer-motion": "^12.41.0",
+    "hls.js": "^1.6.16",
+    "livekit-client": "^2.19.2",
+    "lucide-react": "^1.21.0",
+    "next": "16.2.9",
+    "node-fetch": "^2.7.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-player": "^3.4.0",
+    "tailwind-merge": "^3.6.0",
+    "torrent-search-api": "^2.1.4",
+    "yt-search": "^2.13.1",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

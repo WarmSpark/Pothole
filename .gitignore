@@ -1,0 +1,8 @@
+node_modules/
+.env
+.next/
+*.tar.gz
+ngrok.log
+.DS_Store
+desktop/
+mobile/

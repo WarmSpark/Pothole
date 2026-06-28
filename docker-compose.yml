@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_URL=${LIVEKIT_URL}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8080
+      - NEXT_PUBLIC_LIVEKIT_URL=${LIVEKIT_URL}
+      - NEXT_PUBLIC_TORRENT_URL=http://localhost:3005
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+      - torrent
+    restart: unless-stopped
+
+  torrent:
+    build:
+      context: ./torrent
+      dockerfile: Dockerfile
+    ports:
+      - "3005:3005"
+    volumes:
+      - ./torrent:/app
+      - /app/node_modules
+    restart: unless-stopped
