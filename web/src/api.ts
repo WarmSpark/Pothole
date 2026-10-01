@@ -1,9 +1,8 @@
-// Pothole Streaming API Client for Django Backend
 const getApiBase = () => {
   if (typeof window !== 'undefined') {
-    return process.env.NEXT_PUBLIC_DJANGO_API_URL || 'http://localhost:8000/api';
+    return '/api/backend';
   }
-  return process.env.DJANGO_API_URL || 'http://localhost:8000/api';
+  return process.env.DJANGO_API_URL || 'http://127.0.0.1:8000/api';
 };
 
 export interface User {
@@ -54,7 +53,7 @@ export interface StudioAccounting {
 export const api = {
   // Authentication
   login: async (email: string, password: string): Promise<AuthResponse> => {
-    const res = await fetch(`${getApiBase()}/auth/login/`, {
+    const res = await fetch(`${getApiBase()}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -67,7 +66,7 @@ export const api = {
   },
 
   register: async (email: string, password: string, fullName: string, role: string = 'viewer'): Promise<AuthResponse> => {
-    const res = await fetch(`${getApiBase()}/auth/register/`, {
+    const res = await fetch(`${getApiBase()}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, full_name: fullName, role }),
@@ -80,7 +79,7 @@ export const api = {
   },
 
   getMe: async (token: string): Promise<User> => {
-    const res = await fetch(`${getApiBase()}/auth/me/`, {
+    const res = await fetch(`${getApiBase()}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error('Session expired');
@@ -90,7 +89,7 @@ export const api = {
 
   // Studio Production Rights & Claiming
   claimMovie: async (movieData: any, token: string): Promise<any> => {
-    const res = await fetch(`${getApiBase()}/movies/claim/`, {
+    const res = await fetch(`${getApiBase()}/movies/claim`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -106,7 +105,7 @@ export const api = {
   },
 
   getStudioPortfolio: async (token: string): Promise<{ studio_id: string; total_portfolio_earnings_usd: number; titles_count: number; movies: StudioMovieItem[] }> => {
-    const res = await fetch(`${getApiBase()}/movies/my-portfolio/`, {
+    const res = await fetch(`${getApiBase()}/movies/my-portfolio`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
@@ -118,7 +117,7 @@ export const api = {
 
   getClaimedStatusMap: async (): Promise<Record<string, ClaimedStatus>> => {
     try {
-      const res = await fetch(`${getApiBase()}/movies/claimed-status/`);
+      const res = await fetch(`${getApiBase()}/movies/claimed-status`);
       if (!res.ok) return {};
       return res.json();
     } catch {
@@ -128,7 +127,7 @@ export const api = {
 
   searchOMDbWithClaimStatus: async (query: string): Promise<any[]> => {
     try {
-      const res = await fetch(`${getApiBase()}/movies/search/omdb/?q=${encodeURIComponent(query)}`);
+      const res = await fetch(`${getApiBase()}/movies/search/omdb?q=${encodeURIComponent(query)}`);
       if (!res.ok) return [];
       const data = await res.json();
       return data.results || [];
@@ -142,7 +141,7 @@ export const api = {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${getApiBase()}/royalties/heartbeat/`, {
+    const res = await fetch(`${getApiBase()}/royalties/heartbeat`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -157,7 +156,7 @@ export const api = {
   },
 
   getStudioAccounting: async (token: string): Promise<StudioAccounting> => {
-    const res = await fetch(`${getApiBase()}/royalties/studio/`, {
+    const res = await fetch(`${getApiBase()}/royalties/studio`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error('Failed to load studio accounting');

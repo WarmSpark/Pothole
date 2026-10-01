@@ -27,8 +27,7 @@ export const TorrentPlayer: React.FC<TorrentPlayerProps> = ({
   const [stats, setStats] = useState({ peers: 0, speed: 0 });
 
   const getBaseUrl = () => {
-     if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_TORRENT_URL || "http://localhost:3005";
-     return process.env.NEXT_PUBLIC_TORRENT_URL || `http://${window.location.hostname}:3005`;
+     return "/engine";
   };
 
   useEffect(() => {

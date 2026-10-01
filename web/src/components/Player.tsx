@@ -24,7 +24,17 @@ export const Player = () => {
   const handleSelectStream = (stream: any) => {
     let targetMagnet = 'error';
     if (stream.infoHash) {
-        targetMagnet = `magnet:?xt=urn:btih:${stream.infoHash}`;
+        const trackers = [
+          'http://tracker.opentrackr.org:1337/announce',
+          'udp://tracker.opentrackr.org:1337/announce',
+          'http://tracker.openbittorrent.com:80/announce',
+          'udp://tracker.openbittorrent.com:6969/announce',
+          'udp://open.stealth.si:80/announce',
+          'udp://tracker.torrent.eu.org:451/announce',
+          'wss://tracker.openwebtorrent.com',
+          'wss://tracker.webtorrent.dev'
+        ];
+        targetMagnet = `magnet:?xt=urn:btih:${stream.infoHash}&${trackers.map(t => 'tr=' + encodeURIComponent(t)).join('&')}`;
     } else if (stream.url && stream.url.startsWith('magnet:')) {
         targetMagnet = stream.url;
     }
@@ -51,20 +61,22 @@ export const Player = () => {
       const res = await fetch(apiUrl);
       const data = await res.json();
       if (data.streams && data.streams.length > 0) {
-        const parseSizeMB = (title: string) => {
-          if (!title) return 999999;
-          const match = title.match(/💾\s*([\d.]+)\s*(GB|MB)/i);
-          if (!match) return 999999;
-          const amount = parseFloat(match[1]);
-          const unit = match[2].toUpperCase();
-          return unit === 'GB' ? amount * 1024 : amount;
+        const parseSeeders = (title: string) => {
+          if (!title) return 0;
+          const match = title.match(/👤\s*(\d+)/);
+          return match ? parseInt(match[1]) : 0;
         };
         
+        // Prioritize streams with the highest active seeders
         const sortedStreams = data.streams.sort((a: any, b: any) => {
-          return parseSizeMB(a.title) - parseSizeMB(b.title);
+          return parseSeeders(b.title) - parseSeeders(a.title);
         });
         
         setTorrentStreams(sortedStreams);
+        // Automatically start playing the healthiest swarm
+        if (sortedStreams[0]) {
+          handleSelectStream(sortedStreams[0]);
+        }
       } else {
         setMagnetLink('error');
       }
@@ -88,8 +100,7 @@ export const Player = () => {
     if (!magnetLink || magnetLink === 'error') return;
     
     const getBaseUrl = () => {
-       if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_TORRENT_URL || "http://localhost:3005";
-       return process.env.NEXT_PUBLIC_TORRENT_URL || `http://${window.location.hostname}:3005`;
+       return '/engine';
     };
 
     const interval = setInterval(async () => {
