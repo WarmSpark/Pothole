@@ -652,7 +652,18 @@ def recommendations_for_me(request):
         for g in (m.genres or []):
             if len(genre_map[g]) < 20:
                 genre_map[g].append(serialize_movie(m))
-    genre_shelves = {g: movies for g, movies in genre_map.items() if movies}
+
+    PREFERRED_GENRES = [
+        'Action', 'Sci-Fi', 'Thriller', 'Comedy', 'Drama', 'Horror',
+        'Romance', 'Crime', 'Animation', 'Adventure', 'Mystery', 'Fantasy'
+    ]
+    genre_shelves = {}
+    for g in PREFERRED_GENRES:
+        if g in genre_map and len(genre_map[g]) >= 4:
+            genre_shelves[g] = genre_map[g]
+    for g, movies in genre_map.items():
+        if g not in genre_shelves and len(movies) >= 4:
+            genre_shelves[g] = movies
 
     # ── If not logged in → return trending + genres only ──────────────────
     if not user_id:

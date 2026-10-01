@@ -220,6 +220,36 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
     setDetailItem(null);
   };
 
+  const handleOpenTrailer = async (item: any) => {
+    const existingId = item.trailer_youtube_id || item.trailerYoutubeId;
+    if (existingId) {
+      setTrailerItem({ ...item, trailer_youtube_id: existingId, loading: false });
+      return;
+    }
+
+    setTrailerItem({ ...item, loading: true });
+    try {
+      const qTitle = item.title;
+      const qYear = item.year || item.release_year || '';
+      const res = await fetch(`/api/trailer?title=${encodeURIComponent(qTitle)}&year=${encodeURIComponent(qYear)}`);
+      const data = await res.json();
+      if (data?.videoId) {
+        setTrailerItem({
+          ...item,
+          trailer_youtube_id: data.videoId,
+          trailerTitle: data.title,
+          loading: false
+        });
+      } else {
+        window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(item.title + ' official trailer')}`, '_blank');
+        setTrailerItem(null);
+      }
+    } catch {
+      window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(item.title + ' official trailer')}`, '_blank');
+      setTrailerItem(null);
+    }
+  };
+
   const getClaimInfo = (imdbId?: string, title?: string): ClaimedStatus | null => {
     if (!imdbId && !title) return null;
     if (imdbId && claimedMap[imdbId]) return claimedMap[imdbId];
@@ -306,9 +336,49 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                           </div>
                         )}
                       </div>
+
+                      {/* Hover Overlay with Play and Trailer Actions */}
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectMovieOrSeries(item);
+                          }}
+                          className="w-10 h-10 rounded-full bg-white hover:bg-gray-200 text-black flex items-center justify-center shadow-xl hover:scale-110 transition-transform cursor-pointer"
+                          title="Play Stream"
+                        >
+                          <Play className="w-5 h-5 fill-black ml-0.5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenTrailer(item);
+                          }}
+                          className="bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 hover:scale-105 transition-all cursor-pointer border border-red-400/40"
+                          title="Watch Trailer"
+                        >
+                          <Film className="w-3.5 h-3.5" />
+                          <span>Trailer</span>
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-gray-200 text-xs font-bold mt-2 truncate group-hover:text-white transition-colors">{item.title}</p>
-                    <p className="text-gray-400 text-[10px]">{item.year || ''}</p>
+                    <div className="flex items-start justify-between gap-1 mt-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-gray-200 text-xs font-bold truncate group-hover:text-white transition-colors">{item.title}</p>
+                        <p className="text-gray-400 text-[10px]">{item.year || ''}</p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenTrailer(item);
+                        }}
+                        className="text-[10px] font-bold text-red-400 hover:text-white bg-red-950/60 hover:bg-red-600 border border-red-700/50 px-2 py-0.5 rounded transition-all cursor-pointer shrink-0 flex items-center gap-1"
+                        title="Watch Trailer"
+                      >
+                        <Film className="w-3 h-3" />
+                        <span>Trailer</span>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -462,15 +532,17 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                             <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shadow-md hover:scale-110 transition-transform">
                               <Play className="w-3.5 h-3.5 fill-black ml-0.5" />
                             </div>
-                            {trailerYtId && (
-                              <button
-                                onClick={e => { e.stopPropagation(); setTrailerItem(item); }}
-                                className="w-7 h-7 rounded-full bg-red-600/80 flex items-center justify-center text-white shadow-md hover:scale-110 transition-transform cursor-pointer"
-                                title="Watch Trailer"
-                              >
-                                <Film className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            {/* Trailer button on hover */}
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleOpenTrailer(item);
+                              }}
+                              className="w-7 h-7 rounded-full bg-red-600/90 hover:bg-red-600 flex items-center justify-center text-white shadow-md hover:scale-110 transition-transform cursor-pointer border border-white/20"
+                              title="Watch Trailer"
+                            >
+                              <Film className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
 
@@ -489,11 +561,26 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                         </div>
                       )}
 
-                      <p className="text-white text-xs font-bold mt-1.5 truncate group-hover:text-[#E50914] transition-colors">{item.title}</p>
-                      <p className="text-gray-500 text-[10px]">
-                        {item.watchedAt || item.release_year || item.year || ''}
-                        {(item.imdb_score && !showProgress) ? ` • ⭐${item.imdb_score}` : ''}
-                      </p>
+                      <div className="flex items-start justify-between gap-1 mt-1.5">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-xs font-bold truncate group-hover:text-[#E50914] transition-colors">{item.title}</p>
+                          <p className="text-gray-500 text-[10px]">
+                            {item.watchedAt || item.release_year || item.year || ''}
+                            {(item.imdb_score && !showProgress) ? ` • ⭐${item.imdb_score}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenTrailer(item);
+                          }}
+                          className="text-[9px] font-bold text-red-400 hover:text-white bg-red-950/60 hover:bg-red-600 border border-red-700/50 px-1.5 py-0.5 rounded transition-all cursor-pointer shrink-0 flex items-center gap-1"
+                          title="Watch Trailer"
+                        >
+                          <Film className="w-2.5 h-2.5" />
+                          <span>Trailer</span>
+                        </button>
+                      </div>
                     </div>
                   );
                 };
@@ -605,25 +692,44 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
           onClick={() => setTrailerItem(null)}
         >
           <div
-            className="relative w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10"
+            className="relative w-full max-w-4xl aspect-video bg-[#141414] rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center"
             onClick={e => e.stopPropagation()}
           >
             <button
               onClick={() => setTrailerItem(null)}
-              className="absolute top-3 right-3 z-10 w-9 h-9 flex items-center justify-center rounded-full bg-black/70 text-white hover:bg-[#E50914] transition-colors border border-white/20 cursor-pointer"
+              className="absolute top-3 right-3 z-20 w-9 h-9 flex items-center justify-center rounded-full bg-black/70 text-white hover:bg-[#E50914] transition-colors border border-white/20 cursor-pointer shadow-lg"
             >
               ✕
             </button>
-            <div className="absolute top-3 left-3 z-10 bg-[#E50914] text-white text-xs font-black px-3 py-1 rounded-full tracking-wide uppercase">
-              Official Trailer
+            <div className="absolute top-3 left-3 z-20 bg-[#E50914] text-white text-xs font-black px-3 py-1 rounded-full tracking-wide uppercase shadow-lg flex items-center gap-1.5">
+              <Film className="w-3.5 h-3.5" />
+              <span>Official Trailer</span>
             </div>
-            <iframe
-              src={`https://www.youtube.com/embed/${trailerItem.trailer_youtube_id || trailerItem.trailerYoutubeId}?autoplay=1&rel=0&modestbranding=1`}
-              className="w-full h-full"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              title={`${trailerItem.title} — Official Trailer`}
-            />
+            {trailerItem.loading ? (
+              <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
+                <div className="w-8 h-8 border-3 border-[#E50914] border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-gray-200 text-sm font-bold">Finding official trailer for "{trailerItem.title}"...</p>
+                <p className="text-gray-500 text-xs">Streaming directly via YouTube</p>
+              </div>
+            ) : trailerItem.trailer_youtube_id ? (
+              <iframe
+                src={`https://www.youtube.com/embed/${trailerItem.trailer_youtube_id}?autoplay=1&rel=0&modestbranding=1`}
+                className="w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                title={`${trailerItem.title} — Official Trailer`}
+              />
+            ) : (
+              <div className="text-center p-6">
+                <p className="text-gray-300 font-bold mb-3">No direct trailer stream found.</p>
+                <button
+                  onClick={() => window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(trailerItem.title + ' official trailer')}`, '_blank')}
+                  className="bg-[#E50914] text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-red-700 cursor-pointer"
+                >
+                  Search on YouTube
+                </button>
+              </div>
+            )}
           </div>
           <div className="absolute bottom-6 left-0 right-0 text-center">
             <p className="text-white font-black text-lg">{trailerItem.title}</p>
@@ -806,6 +912,14 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                 >
                   <Play className="w-4 h-4 fill-white" />
                   <span>Choose Stream</span>
+                </button>
+                <button 
+                  onClick={() => handleOpenTrailer(detailItem)}
+                  className="bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-5 rounded-xl border border-white/20 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                  title="Watch Official Trailer"
+                >
+                  <Film className="w-4 h-4 text-red-500" />
+                  <span>Watch Trailer</span>
                 </button>
               </div>
             </div>

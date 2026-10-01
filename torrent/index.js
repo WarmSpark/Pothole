@@ -2,6 +2,18 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
+process.on('uncaughtException', (err) => {
+    // Suppress WebRTC peer datachannel abort errors on peer disconnects
+    if (err && (err.code === 'ERR_DATA_CHANNEL' || err.message?.includes('User-Initiated Abort'))) {
+        return;
+    }
+    console.error('[Torrent Process UncaughtException]', err?.message || err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[Torrent Process UnhandledRejection]', reason);
+});
+
 const app = express();
 app.use(cors());
 
