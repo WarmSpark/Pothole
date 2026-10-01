@@ -45,6 +45,31 @@ class Movie(models.Model):
     def __str__(self):
         return f"{self.title} ({self.release_year})"
 
+class WatchHistory(models.Model):
+    """Per-user watch history stored in Django-managed Postgres table."""
+    id = models.CharField(max_length=36, primary_key=True, default=uuid.uuid4)
+    user_id = models.CharField(max_length=36, db_index=True)
+    movie_id = models.CharField(max_length=255)          # imdbID or internal uuid
+    title = models.CharField(max_length=255)
+    poster_url = models.CharField(max_length=1024, null=True, blank=True)
+    imdb_id = models.CharField(max_length=50, null=True, blank=True)
+    genres = SafeJSONField(default=list)
+    director = models.CharField(max_length=255, null=True, blank=True)
+    cast = SafeJSONField(default=list)
+    release_year = models.IntegerField(null=True, blank=True)
+    progress_seconds = models.IntegerField(default=0)
+    watched_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'watch_history'
+        managed = True
+        ordering = ['-watched_at']
+        unique_together = [('user_id', 'movie_id')]
+
+    def __str__(self):
+        return f"{self.user_id} → {self.title}"
+
+
 class Contract(models.Model):
     id = models.CharField(max_length=36, primary_key=True, default=uuid.uuid4)
     movie_id = models.CharField(max_length=36)

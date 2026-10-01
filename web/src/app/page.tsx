@@ -241,6 +241,7 @@ export default function Home() {
               setSearchQuery={setSearchQuery}
               refreshTrigger={refreshTrigger}
               isLoggedIn={!!user}
+              userToken={token}
               onRequireAuth={(msg) => {
                 setAuthPromptMessage(msg || "Sign in with a Viewer or Studio account to watch movies and series.");
                 setIsAuthOpen(true);

@@ -162,4 +162,53 @@ export const api = {
     if (!res.ok) throw new Error('Failed to load studio accounting');
     return res.json();
   },
+
+  // ── Watch History (per-user, DB-backed) ──────────────────────────────────
+  getWatchHistory: async (token: string): Promise<any[]> => {
+    try {
+      const res = await fetch(`${getApiBase()}/movies/watch-history`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return [];
+      return res.json();
+    } catch { return []; }
+  },
+
+  logWatchHistory: async (item: {
+    movie_id: string; title: string; poster_url?: string;
+    imdb_id?: string; genres?: string[]; director?: string;
+    cast?: string[]; release_year?: number; progress_seconds?: number;
+  }, token: string): Promise<void> => {
+    try {
+      await fetch(`${getApiBase()}/movies/watch-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(item),
+      });
+    } catch { /* silent */ }
+  },
+
+  clearWatchHistory: async (token: string, movieId?: string): Promise<void> => {
+    try {
+      const url = movieId
+        ? `${getApiBase()}/movies/watch-history?movie_id=${encodeURIComponent(movieId)}`
+        : `${getApiBase()}/movies/watch-history`;
+      await fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    } catch { /* silent */ }
+  },
+
+  // ── ML Personalised Recommendations ──────────────────────────────────────
+  getRecommendations: async (token?: string | null): Promise<{
+    personalised: any[]; trending: any[]; genres: Record<string, any[]>; history: any[];
+  }> => {
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${getApiBase()}/movies/recommendations/for-me`, { headers });
+      if (!res.ok) return { personalised: [], trending: [], genres: {}, history: [] };
+      return res.json();
+    } catch {
+      return { personalised: [], trending: [], genres: {}, history: [] };
+    }
+  },
 };

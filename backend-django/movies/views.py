@@ -1,17 +1,20 @@
 import uuid
 import re
 import os
+import math
 import requests
+from collections import defaultdict
 from django.shortcuts import get_object_or_404
 from django.http import StreamingHttpResponse, HttpResponse, JsonResponse
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import AccessToken
-from django.db.models import Sum
+from django.db.models import Sum, Count
 
-from .models import Movie, Contract
+from .models import Movie, Contract, WatchHistory
 from .serializers import MovieSerializer
 from accounts.models import User
 from royalties.models import RoyaltyLog
@@ -459,3 +462,283 @@ def claimed_status_map(request):
         lookup[m.title.lower()] = entry
 
     return Response(lookup)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WATCH HISTORY — per-user, stored in DB
+# ─────────────────────────────────────────────────────────────────────────────
+
+@api_view(['GET', 'POST', 'DELETE'])
+@permission_classes([AllowAny])
+def watch_history(request):
+    """
+    GET  → returns the authenticated user's watch history (most recent first)
+    POST → logs / updates a watched movie entry (upsert on user_id+movie_id)
+    DELETE ?movie_id=X → remove one entry; no body → clear all history
+    """
+    user_id, _ = get_authenticated_user_id(request)
+    if not user_id:
+        return Response({'detail': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    if request.method == 'GET':
+        entries = WatchHistory.objects.filter(user_id=user_id).order_by('-watched_at')[:50]
+        data = [{
+            'id': e.id,
+            'movie_id': e.movie_id,
+            'title': e.title,
+            'poster_url': e.poster_url,
+            'imdb_id': e.imdb_id,
+            'genres': e.genres or [],
+            'director': e.director,
+            'cast': e.cast or [],
+            'release_year': e.release_year,
+            'progress_seconds': e.progress_seconds,
+            'watched_at': e.watched_at.isoformat(),
+        } for e in entries]
+        return Response(data)
+
+    elif request.method == 'POST':
+        d = request.data
+        movie_id = d.get('movie_id', '').strip()
+        title = d.get('title', '').strip()
+        if not movie_id or not title:
+            return Response({'detail': 'movie_id and title required'}, status=400)
+
+        entry, created = WatchHistory.objects.update_or_create(
+            user_id=user_id,
+            movie_id=movie_id,
+            defaults={
+                'title': title,
+                'poster_url': d.get('poster_url'),
+                'imdb_id': d.get('imdb_id'),
+                'genres': d.get('genres', []),
+                'director': d.get('director'),
+                'cast': d.get('cast', []),
+                'release_year': d.get('release_year'),
+                'progress_seconds': d.get('progress_seconds', 0),
+                'watched_at': timezone.now(),
+            }
+        )
+        return Response({'status': 'ok', 'created': created}, status=201 if created else 200)
+
+    elif request.method == 'DELETE':
+        movie_id = request.GET.get('movie_id')
+        if movie_id:
+            WatchHistory.objects.filter(user_id=user_id, movie_id=movie_id).delete()
+            return Response({'status': 'removed'})
+        WatchHistory.objects.filter(user_id=user_id).delete()
+        return Response({'status': 'cleared'})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ML RECOMMENDATION ENGINE
+# Content-Based TF-IDF + Collaborative Filtering (watch-history co-occurrence)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _tfidf_cosine(vec_a: dict, vec_b: dict) -> float:
+    """Cosine similarity between two TF-IDF dicts without numpy."""
+    shared = set(vec_a) & set(vec_b)
+    dot = sum(vec_a[t] * vec_b[t] for t in shared)
+    norm_a = math.sqrt(sum(v * v for v in vec_a.values())) or 1e-9
+    norm_b = math.sqrt(sum(v * v for v in vec_b.values())) or 1e-9
+    return dot / (norm_a * norm_b)
+
+
+def _build_tfidf(docs: list[str]) -> list[dict]:
+    """Build TF-IDF vectors for a list of text documents (pure Python)."""
+    tokenized = [d.lower().split() for d in docs]
+    # IDF
+    n = len(tokenized)
+    df: dict[str, int] = defaultdict(int)
+    for tokens in tokenized:
+        for t in set(tokens):
+            df[t] += 1
+    idf = {t: math.log((n + 1) / (c + 1)) + 1 for t, c in df.items()}
+    # TF-IDF
+    vectors = []
+    for tokens in tokenized:
+        tf: dict[str, float] = defaultdict(float)
+        for t in tokens:
+            tf[t] += 1
+        total = len(tokens) or 1
+        vectors.append({t: (cnt / total) * idf.get(t, 1.0) for t, cnt in tf.items()})
+    return vectors
+
+
+def _movie_doc(m) -> str:
+    """Create a text bag-of-words document for a movie."""
+    parts = []
+    parts += (m.genres or [])
+    parts += (m.tags or [])
+    if m.director:
+        parts += m.director.replace(' ', '_').split(',')
+    if m.cast:
+        parts += [c.replace(' ', '_') for c in (m.cast or [])[:5]]
+    if m.release_year:
+        decade = f"decade_{(m.release_year // 10) * 10}"
+        parts.append(decade)
+    return ' '.join(parts)
+
+
+def _collaborative_boost(user_history_ids: set, all_users_history: dict) -> dict:
+    """
+    Simple user-based collaborative filtering:
+    Find users whose history overlaps most with this user,
+    then score movies they watched that this user hasn't.
+    """
+    overlap: dict[str, int] = defaultdict(int)     # other_user_id → overlap count
+    for other_uid, other_ids in all_users_history.items():
+        shared = len(user_history_ids & other_ids)
+        if shared > 0:
+            overlap[other_uid] = shared
+
+    # Aggregate scores for unseen movies from similar users (weighted by overlap)
+    movie_scores: dict[str, float] = defaultdict(float)
+    for other_uid, sim in overlap.items():
+        for mid in all_users_history[other_uid] - user_history_ids:
+            movie_scores[mid] += sim
+
+    return movie_scores
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def recommendations_for_me(request):
+    """
+    Personalised ML recommendation endpoint.
+
+    Algorithm:
+      1. Pull user's watch history from DB
+      2. Content-based TF-IDF cosine similarity against all movies in DB
+      3. Collaborative boost: upweight movies watched by similar-taste users
+      4. Merge scores, exclude already-watched, return top-N
+      5. Fallback to trending (highest IMDB) if no history
+
+    Also returns: trending (top IMDB score), and per-genre shelves.
+    """
+    user_id, _ = get_authenticated_user_id(request)
+
+    all_movies = list(Movie.objects.filter(is_published=True))
+    movie_index = {str(m.id): m for m in all_movies}
+    imdb_index  = {m.imdb_id: m for m in all_movies if m.imdb_id}
+
+    def serialize_movie(m):
+        return {
+            'id': str(m.id),
+            'title': m.title,
+            'poster_url': m.poster_url,
+            'backdrop_url': m.backdrop_url,
+            'imdb_id': m.imdb_id,
+            'genres': m.genres or [],
+            'release_year': m.release_year,
+            'imdb_score': m.imdb_score,
+            'director': m.director,
+            'cast': m.cast or [],
+            'description': m.description,
+            'trailer_youtube_id': m.trailer_youtube_id,
+            'stream_type': m.stream_type,
+            'duration_minutes': m.duration_minutes,
+            'rating': m.rating,
+            'studio_id': str(m.studio_id) if m.studio_id else None,
+        }
+
+    # ── Trending: top 20 by IMDB score ────────────────────────────────────
+    trending = sorted(all_movies, key=lambda m: (m.imdb_score or 0), reverse=True)[:20]
+    trending_data = [serialize_movie(m) for m in trending]
+
+    # ── Genre shelves ──────────────────────────────────────────────────────
+    genre_map: dict[str, list] = defaultdict(list)
+    for m in sorted(all_movies, key=lambda m: (m.imdb_score or 0), reverse=True):
+        for g in (m.genres or []):
+            if len(genre_map[g]) < 20:
+                genre_map[g].append(serialize_movie(m))
+    genre_shelves = {g: movies for g, movies in genre_map.items() if movies}
+
+    # ── If not logged in → return trending + genres only ──────────────────
+    if not user_id:
+        return Response({
+            'personalised': [],
+            'trending': trending_data,
+            'genres': genre_shelves,
+            'history': [],
+        })
+
+    # ── User history ──────────────────────────────────────────────────────
+    user_entries = list(WatchHistory.objects.filter(user_id=user_id).order_by('-watched_at')[:30])
+    history_data = [{
+        'id': e.id,
+        'movie_id': e.movie_id,
+        'title': e.title,
+        'poster_url': e.poster_url,
+        'imdb_id': e.imdb_id,
+        'genres': e.genres or [],
+        'director': e.director,
+        'progress_seconds': e.progress_seconds,
+        'watched_at': e.watched_at.isoformat(),
+    } for e in user_entries]
+
+    if not user_entries:
+        return Response({
+            'personalised': [],
+            'trending': trending_data,
+            'genres': genre_shelves,
+            'history': [],
+        })
+
+    # ── Resolve watched movie IDs ──────────────────────────────────────────
+    watched_ids: set[str] = set()
+    for e in user_entries:
+        watched_ids.add(e.movie_id)
+        if e.imdb_id:
+            watched_ids.add(e.imdb_id)
+
+    # ── Build TF-IDF for all DB movies ───────────────────────────────────
+    docs = [_movie_doc(m) for m in all_movies]
+    tfidf_vecs = _build_tfidf(docs)
+    movie_vec_map = {str(all_movies[i].id): tfidf_vecs[i] for i in range(len(all_movies))}
+
+    # ── Build user preference vector (avg of watched movie vectors) ───────
+    user_vec: dict[str, float] = defaultdict(float)
+    matched = 0
+    for e in user_entries:
+        m_obj = movie_index.get(e.movie_id) or imdb_index.get(e.imdb_id or '')
+        if m_obj:
+            for term, val in movie_vec_map.get(str(m_obj.id), {}).items():
+                user_vec[term] += val
+            matched += 1
+    if matched > 0:
+        user_vec = {t: v / matched for t, v in user_vec.items()}
+
+    # ── Content-based scores ───────────────────────────────────────────────
+    cb_scores: dict[str, float] = {}
+    for m in all_movies:
+        mid = str(m.id)
+        if mid in watched_ids or (m.imdb_id and m.imdb_id in watched_ids):
+            continue
+        cb_scores[mid] = _tfidf_cosine(user_vec, movie_vec_map.get(mid, {}))
+
+    # ── Collaborative boost ───────────────────────────────────────────────
+    all_history_qs = WatchHistory.objects.exclude(user_id=user_id).values('user_id', 'movie_id')
+    all_users_hist: dict[str, set] = defaultdict(set)
+    for row in all_history_qs:
+        all_users_hist[row['user_id']].add(row['movie_id'])
+
+    collab_scores = _collaborative_boost(watched_ids, all_users_hist)
+
+    # ── Merge: content_based * 0.7 + collab * 0.3 (normalised) ──────────
+    max_collab = max(collab_scores.values(), default=1) or 1
+    final_scores: dict[str, float] = {}
+    for mid, cb in cb_scores.items():
+        collab = collab_scores.get(mid, 0) / max_collab
+        final_scores[mid] = cb * 0.7 + collab * 0.3
+
+    # ── Sort and return top 20 ─────────────────────────────────────────────
+    top_ids = sorted(final_scores, key=lambda x: final_scores[x], reverse=True)[:20]
+    personalised = [serialize_movie(movie_index[mid]) for mid in top_ids if mid in movie_index]
+
+    return Response({
+        'personalised': personalised,
+        'trending': trending_data,
+        'genres': genre_shelves,
+        'history': history_data,
+    })

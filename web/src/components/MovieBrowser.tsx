@@ -26,6 +26,7 @@ interface MovieBrowserProps {
   onOpenStudioPortal?: () => void;
   isLoggedIn?: boolean;
   onRequireAuth?: (msg?: string) => void;
+  userToken?: string | null;
 }
 
 export const MovieBrowser: React.FC<MovieBrowserProps> = ({ 
@@ -34,14 +35,18 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
   refreshTrigger = 0,
   onOpenStudioPortal,
   isLoggedIn = false,
-  onRequireAuth
+  onRequireAuth,
+  userToken = null,
 }) => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
    
-  // Home Screen State
+  // Home Screen State — ML-powered
   const [homeData, setHomeData] = useState<any[]>([]);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
+  const [personalisedRecs, setPersonalisedRecs] = useState<any[]>([]);
+  const [trendingMovies, setTrendingMovies] = useState<any[]>([]);
+  const [genreShelves, setGenreShelves] = useState<Record<string, any[]>>({});
 
   // Claimed Status Map from Django Backend
   const [claimedMap, setClaimedMap] = useState<Record<string, ClaimedStatus>>({});
@@ -54,72 +59,68 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
   // Detail Modal State (for More Info)
   const [detailItem, setDetailItem] = useState<any | null>(null);
 
-  // Watch History State
+  // YouTube Trailer Modal
+  const [trailerItem, setTrailerItem] = useState<any | null>(null);
+
+  // Watch History State — DB-backed per user
   const [watchHistory, setWatchHistory] = useState<any[]>([]);
 
+  // Load Watch History from DB (per user) or nothing if logged out
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('pothole_watch_history');
-      if (saved) {
-        try {
-          setWatchHistory(JSON.parse(saved));
-        } catch (e) {}
-      } else {
-        const defaultHistory = [
-          {
-            id: 'hist-1',
-            videoId: 'tt0816692',
-            title: 'Interstellar',
-            type: 'movie',
-            thumbnail: 'https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_SX300.jpg',
-            watchedAt: 'Recently',
-            progress: 72
-          },
-          {
-            id: 'hist-2',
-            videoId: 'tt1375666',
-            title: 'Inception',
-            type: 'movie',
-            thumbnail: 'https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_SX300.jpg',
-            watchedAt: 'Yesterday',
-            progress: 45
-          },
-          {
-            id: 'hist-3',
-            videoId: 'tt0468569',
-            title: 'The Dark Knight',
-            type: 'movie',
-            thumbnail: 'https://m.media-amazon.com/images/M/MV5BMTMxNTMwODM0NF5BMl5BanBnXkFtZTcwODAyMTk2Mw@@._V1_SX300.jpg',
-            watchedAt: '3 days ago',
-            progress: 88
-          }
-        ];
-        setWatchHistory(defaultHistory);
-        localStorage.setItem('pothole_watch_history', JSON.stringify(defaultHistory));
-      }
+    if (isLoggedIn && userToken) {
+      api.getWatchHistory(userToken).then(entries => {
+        const mapped = entries.map((e: any) => ({
+          id: e.id,
+          videoId: e.imdb_id || e.movie_id,
+          movie_id: e.movie_id,
+          title: e.title,
+          type: 'movie',
+          thumbnail: e.poster_url || '',
+          watchedAt: new Date(e.watched_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+          progress: Math.min(100, Math.max(5, e.progress_seconds ? Math.round(e.progress_seconds / 72) : 40)),
+          genres: e.genres || [],
+          director: e.director,
+        }));
+        setWatchHistory(mapped);
+      }).catch(() => setWatchHistory([]));
+    } else {
+      setWatchHistory([]);
     }
-  }, []);
+  }, [isLoggedIn, userToken]);
 
   const addToHistory = (item: any) => {
-    if (typeof window === 'undefined') return;
-    try {
-      const existing: any[] = JSON.parse(localStorage.getItem('pothole_watch_history') || '[]');
-      const filtered = existing.filter(h => h.videoId !== item.videoId);
-      const updated = [
+    // Optimistic local update
+    setWatchHistory(prev => {
+      const filtered = prev.filter(h => h.videoId !== (item.videoId || item.movie_id));
+      return [
         {
           id: item.videoId || Math.random().toString(),
           videoId: item.videoId,
+          movie_id: item.movie_id || item.videoId,
           title: item.title,
           type: item.type || 'movie',
           thumbnail: item.thumbnail || '',
           watchedAt: 'Just now',
-          progress: Math.floor(Math.random() * 40) + 30
+          progress: 10,
+          genres: item.genres || [],
+          director: item.director || null,
         },
-        ...filtered
-      ].slice(0, 10);
-      localStorage.setItem('pothole_watch_history', JSON.stringify(updated));
-      setWatchHistory(updated);
-    } catch (e) {}
+        ...filtered,
+      ].slice(0, 30);
+    });
+    // Persist to DB if logged in
+    if (isLoggedIn && userToken) {
+      api.logWatchHistory({
+        movie_id: item.movie_id || item.videoId || item.title,
+        title: item.title,
+        poster_url: item.thumbnail,
+        imdb_id: item.videoId?.startsWith('tt') ? item.videoId : undefined,
+        genres: item.genres || [],
+        director: item.director,
+        release_year: item.year ? parseInt(item.year) : undefined,
+        progress_seconds: 0,
+      }, userToken).catch(() => {});
+    }
   };
 
   // Load Claimed Titles from Django Backend
@@ -136,19 +137,23 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
     loadClaimedMap();
   }, [loadClaimedMap, refreshTrigger]);
 
-  // Load Home Data on Mount
+  // Load ML Recommendations + Trending + Genre Shelves from Django
   useEffect(() => {
+    setIsLoadingHome(true);
+    api.getRecommendations(userToken).then(data => {
+      setPersonalisedRecs(data.personalised || []);
+      setTrendingMovies(data.trending || []);
+      setGenreShelves(data.genres || {});
+      setIsLoadingHome(false);
+    }).catch(() => {
+      setIsLoadingHome(false);
+    });
+    // Also load old home data for hero billboard
     fetch('/api/home')
       .then(r => r.json())
-      .then(d => {
-        if (d.homepage) setHomeData(d.homepage);
-        setIsLoadingHome(false);
-      })
-      .catch(e => {
-        console.error(e);
-        setIsLoadingHome(false);
-      });
-  }, []);
+      .then(d => { if (d.homepage) setHomeData(d.homepage); })
+      .catch(() => {});
+  }, [userToken]);
 
   // Search Debounce based on searchQuery from navbar
   useEffect(() => {
@@ -422,149 +427,208 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                 </div>
               )}
 
-              {/* Categorized Netflix Rows */}
-              <div className="flex flex-col gap-8 md:gap-10 -mt-4 relative z-20">
-                {/* Continue Watching / Watch History Row */}
-                {watchHistory.length > 0 && (
-                  <div className="flex flex-col px-4 md:px-12 group/row animate-in fade-in duration-300">
+              {/* ── SHARED MOVIE CARD HELPER ───────────────────────────────────────── */}
+              {/* Shared card renderer for all shelves */}
+              {(() => {
+                const MovieCard = ({ item, showProgress = false }: { item: any; showProgress?: boolean }) => {
+                  const claim = getClaimInfo(item.videoId || item.imdb_id, item.title);
+                  const trailerYtId = item.trailer_youtube_id || item.trailerYoutubeId;
+                  return (
+                    <div
+                      className="w-[130px] sm:w-[155px] md:w-[180px] shrink-0 snap-start flex flex-col group cursor-pointer"
+                      onClick={() => handleSelectMovieOrSeries(item)}
+                    >
+                      <div className="w-full aspect-[2/3] bg-[#1A1A1A] rounded-lg overflow-hidden relative shadow-lg group-hover:ring-2 group-hover:ring-[#E50914] transition-all group-hover:scale-105 duration-300">
+                        {item.thumbnail || item.poster_url ? (
+                          <img src={item.thumbnail || item.poster_url} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center p-2 text-center text-xs text-gray-400 font-bold bg-[#141414]">{item.title}</div>
+                        )}
+
+                        {/* Hover overlay */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
+                          {claim ? (
+                            <div className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded mb-1.5 flex items-center gap-1">
+                              <Building2 className="w-2.5 h-2.5 shrink-0" />
+                              <span className="truncate">{claim.studio_name}</span>
+                            </div>
+                          ) : (
+                            <div className="text-[8px] font-semibold text-emerald-300 bg-emerald-950/80 border border-emerald-600/40 px-1.5 py-0.5 rounded mb-1.5 flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5 shrink-0" />
+                              <span>Unclaimed</span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shadow-md hover:scale-110 transition-transform">
+                              <Play className="w-3.5 h-3.5 fill-black ml-0.5" />
+                            </div>
+                            {trailerYtId && (
+                              <button
+                                onClick={e => { e.stopPropagation(); setTrailerItem(item); }}
+                                className="w-7 h-7 rounded-full bg-red-600/80 flex items-center justify-center text-white shadow-md hover:scale-110 transition-transform cursor-pointer"
+                                title="Watch Trailer"
+                              >
+                                <Film className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* IMDB score badge */}
+                        {(item.imdb_score || item.rating) && (
+                          <div className="absolute top-2 left-2 bg-black/70 backdrop-blur-md text-yellow-400 text-[9px] font-black px-1.5 py-0.5 rounded flex items-center gap-0.5 border border-yellow-400/20">
+                            <Star className="w-2.5 h-2.5 fill-yellow-400" />
+                            {item.imdb_score || item.rating}
+                          </div>
+                        )}
+                      </div>
+
+                      {showProgress && (
+                        <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden mt-2">
+                          <div className="bg-[#E50914] h-full rounded-full" style={{ width: `${item.progress || 30}%` }} />
+                        </div>
+                      )}
+
+                      <p className="text-white text-xs font-bold mt-1.5 truncate group-hover:text-[#E50914] transition-colors">{item.title}</p>
+                      <p className="text-gray-500 text-[10px]">
+                        {item.watchedAt || item.release_year || item.year || ''}
+                        {(item.imdb_score && !showProgress) ? ` • ⭐${item.imdb_score}` : ''}
+                      </p>
+                    </div>
+                  );
+                };
+
+                const ShelfRow = ({ title, icon, items, showProgress = false, onClear }: {
+                  title: string; icon: React.ReactNode; items: any[]; showProgress?: boolean; onClear?: () => void;
+                }) => items.length === 0 ? null : (
+                  <div className="flex flex-col px-4 md:px-12 group/row animate-in fade-in duration-500">
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="text-lg md:text-xl font-black text-white tracking-tight flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-[#E50914]" />
-                        <span>Continue Watching & History</span>
+                        {icon}
+                        <span>{title}</span>
                         <ChevronRight className="w-4 h-4 text-[#E50914] opacity-0 group-hover/row:opacity-100 group-hover/row:translate-x-1 transition-all" />
                       </h3>
-                      <button 
-                        onClick={() => {
-                          setWatchHistory([]);
-                          if (typeof window !== 'undefined') localStorage.removeItem('pothole_watch_history');
-                        }}
-                        className="text-xs text-gray-500 hover:text-gray-300 font-bold cursor-pointer transition-colors"
-                      >
-                        Clear History
-                      </button>
+                      {onClear && (
+                        <button onClick={onClear} className="text-xs text-gray-500 hover:text-gray-300 font-bold cursor-pointer transition-colors">
+                          Clear History
+                        </button>
+                      )}
                     </div>
-
                     <div className="flex gap-3 md:gap-4 overflow-x-auto custom-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth snap-x">
-                      {watchHistory.map((item: any, i: number) => {
-                        const claim = getClaimInfo(item.videoId, item.title);
-                        return (
-                          <div 
-                            key={i} 
-                            className="w-[130px] sm:w-[160px] md:w-[190px] shrink-0 snap-start flex flex-col group cursor-pointer"
-                            onClick={() => handleSelectMovieOrSeries(item)}
-                          >
-                            <div className="w-full aspect-[2/3] bg-[#1A1A1A] rounded-lg overflow-hidden relative shadow-lg group-hover:ring-2 group-hover:ring-[#E50914] transition-all group-hover:scale-105 duration-300">
-                              {item.thumbnail ? (
-                                <img src={item.thumbnail} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center p-2 text-center text-xs text-gray-400 font-bold bg-[#141414]">
-                                  {item.title}
-                                </div>
-                              )}
-                              
-                              {/* Hover Play Button Overlay */}
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <div className="w-10 h-10 rounded-full bg-[#E50914] text-white flex items-center justify-center shadow-lg">
-                                  <Play className="w-5 h-5 fill-white ml-0.5" />
-                                </div>
-                              </div>
-
-                              {claim && (
-                                <div className="absolute top-2 left-2 z-10">
-                                  <span className="bg-red-950/90 text-red-300 border border-red-500/50 text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
-                                    <Building2 className="w-3 h-3" />
-                                    <span>{claim.studio_name}</span>
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Netflix-style Red Watch Progress Bar */}
-                            <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden mt-2">
-                              <div 
-                                className="bg-[#E50914] h-full rounded-full transition-all" 
-                                style={{ width: `${item.progress || 60}%` }} 
-                              />
-                            </div>
-
-                            <p className="text-white text-xs font-bold mt-1.5 truncate group-hover:text-[#E50914] transition-colors">{item.title}</p>
-                            <span className="text-[10px] text-gray-500 font-medium">{item.watchedAt || 'Recently'}</span>
-                          </div>
-                        );
-                      })}
+                      {items.map((item: any, i: number) => <MovieCard key={i} item={item} showProgress={showProgress} />)}
                     </div>
                   </div>
-                )}
+                );
 
-                {carousels.map((cat, idx) => (
-                  <div key={idx} className="flex flex-col px-4 md:px-12 group/row">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg md:text-xl font-black text-white tracking-tight flex items-center gap-2">
-                        {cat.title}
-                        <ChevronRight className="w-4 h-4 text-[#E50914] opacity-0 group-hover/row:opacity-100 group-hover/row:translate-x-1 transition-all" />
-                      </h3>
-                      <span className="text-xs text-gray-500 font-bold">Explore All</span>
-                    </div>
+                const GENRE_ICONS: Record<string, string> = {
+                  Action: '💥', Drama: '🎭', Thriller: '🔪', Comedy: '😂',
+                  'Sci-Fi': '🚀', Horror: '👻', Animation: '🎨', Adventure: '🗺️',
+                  Romance: '❤️', Crime: '🕵️', Fantasy: '🧙', Mystery: '🔍',
+                  Documentary: '🎥', Biography: '📖', History: '🏛️', Music: '🎵',
+                  Sport: '🏆', War: '⚔️', Family: '👨‍👩‍👧', Western: '🤠',
+                };
 
-                    <div className="flex gap-3 md:gap-4 overflow-x-auto custom-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth snap-x">
-                      {cat.items.map((item: any, i: number) => {
-                        const claim = getClaimInfo(item.videoId, item.title);
-                        return (
-                          <div 
-                            key={i} 
-                            className="w-[130px] sm:w-[160px] md:w-[190px] shrink-0 snap-start flex flex-col group cursor-pointer"
-                            onClick={() => handleSelectMovieOrSeries(item)}
-                          >
-                            <div className="w-full aspect-[2/3] bg-[#1A1A1A] rounded-lg overflow-hidden relative shadow-lg group-hover:ring-2 group-hover:ring-[#E50914] transition-all group-hover:scale-105 duration-300">
-                              {item.thumbnail ? (
-                                <img src={item.thumbnail} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">No Image</div>
-                              )}
+                return (
+                  <div className="flex flex-col gap-8 md:gap-10 -mt-4 relative z-20">
 
-                              {/* Format Badge */}
-                              <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[8px] font-black text-white uppercase tracking-wider bg-black/70 backdrop-blur-md border border-white/10">
-                                {item.type}
-                              </div>
+                    {/* 1. Continue Watching */}
+                    <ShelfRow
+                      title="Continue Watching"
+                      icon={<Clock className="w-5 h-5 text-[#E50914]" />}
+                      items={watchHistory}
+                      showProgress
+                      onClear={() => {
+                        setWatchHistory([]);
+                        if (isLoggedIn && userToken) api.clearWatchHistory(userToken).catch(() => {});
+                      }}
+                    />
 
-                              {/* Hover Overlay with Studio Badge & Quick Play */}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
-                                {claim ? (
-                                  <div className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded mb-2 flex items-center gap-1">
-                                    <Building2 className="w-2.5 h-2.5 text-amber-400 shrink-0" />
-                                    <span className="truncate">{claim.studio_name}</span>
-                                  </div>
-                                ) : (
-                                  <div className="text-[8px] font-semibold text-emerald-300 bg-emerald-950/80 border border-emerald-600/40 px-1.5 py-0.5 rounded mb-2 flex items-center gap-1">
-                                    <Sparkles className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-                                    <span className="truncate">Unclaimed</span>
-                                  </div>
-                                )}
+                    {/* 2. ML Personalised Recommendations */}
+                    {isLoggedIn && personalisedRecs.length > 0 && (
+                      <ShelfRow
+                        title="Movies You Might Like"
+                        icon={<Sparkles className="w-5 h-5 text-purple-400" />}
+                        items={personalisedRecs.map(m => ({
+                          ...m, videoId: m.imdb_id || m.id,
+                          thumbnail: m.poster_url,
+                          type: 'movie',
+                        }))}
+                      />
+                    )}
 
-                                <div className="flex items-center gap-2">
-                                  <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shadow-md hover:scale-110 transition-transform">
-                                    <Play className="w-3.5 h-3.5 fill-black ml-0.5" />
-                                  </div>
-                                  <span className="text-xs font-bold text-white">Select Stream</span>
-                                </div>
-                              </div>
-                            </div>
+                    {/* 3. Trending Now */}
+                    <ShelfRow
+                      title="Trending Now"
+                      icon={<span className="text-lg">🔥</span>}
+                      items={trendingMovies.map(m => ({
+                        ...m, videoId: m.imdb_id || m.id,
+                        thumbnail: m.poster_url,
+                        type: 'movie',
+                      }))}
+                    />
 
-                            <p className="text-gray-200 text-xs font-bold mt-2 truncate group-hover:text-white transition-colors">
-                              {item.title}
-                            </p>
-                            <p className="text-gray-500 text-[10px] font-semibold">
-                              {item.year || ''} {item.rating ? `• ⭐ ${item.rating}` : ''}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    {/* 4. Genre Shelves */}
+                    {Object.entries(genreShelves).map(([genre, movies]) => (
+                      <ShelfRow
+                        key={genre}
+                        title={`${GENRE_ICONS[genre] || '🎬'} ${genre}`}
+                        icon={<></>}
+                        items={movies.map(m => ({
+                          ...m, videoId: m.imdb_id || m.id,
+                          thumbnail: m.poster_url,
+                          type: 'movie',
+                        }))}
+                      />
+                    ))}
+
+                    {/* 5. Old API carousels fallback */}
+                    {carousels.map((cat, idx) => (
+                      <ShelfRow
+                        key={idx}
+                        title={cat.title}
+                        icon={<Film className="w-5 h-5 text-[#E50914]" />}
+                        items={cat.items || []}
+                      />
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </>
           )}
+        </div>
+      )}
+
+      {/* YouTube Trailer Modal */}
+      {trailerItem && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setTrailerItem(null)}
+        >
+          <div
+            className="relative w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setTrailerItem(null)}
+              className="absolute top-3 right-3 z-10 w-9 h-9 flex items-center justify-center rounded-full bg-black/70 text-white hover:bg-[#E50914] transition-colors border border-white/20 cursor-pointer"
+            >
+              ✕
+            </button>
+            <div className="absolute top-3 left-3 z-10 bg-[#E50914] text-white text-xs font-black px-3 py-1 rounded-full tracking-wide uppercase">
+              Official Trailer
+            </div>
+            <iframe
+              src={`https://www.youtube.com/embed/${trailerItem.trailer_youtube_id || trailerItem.trailerYoutubeId}?autoplay=1&rel=0&modestbranding=1`}
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              title={`${trailerItem.title} — Official Trailer`}
+            />
+          </div>
+          <div className="absolute bottom-6 left-0 right-0 text-center">
+            <p className="text-white font-black text-lg">{trailerItem.title}</p>
+            <p className="text-gray-400 text-sm mt-0.5">Official Trailer • Click outside to close</p>
+          </div>
         </div>
       )}
 
