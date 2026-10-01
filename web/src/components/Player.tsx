@@ -73,10 +73,6 @@ export const Player = () => {
         });
         
         setTorrentStreams(sortedStreams);
-        // Automatically start playing the healthiest swarm
-        if (sortedStreams[0]) {
-          handleSelectStream(sortedStreams[0]);
-        }
       } else {
         setMagnetLink('error');
       }

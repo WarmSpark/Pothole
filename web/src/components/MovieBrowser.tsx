@@ -19,15 +19,18 @@ import {
 } from 'lucide-react';
 
 interface MovieBrowserProps {
+  searchQuery?: string;
+  setSearchQuery?: (q: string) => void;
   refreshTrigger?: number;
   onOpenStudioPortal?: () => void;
 }
 
 export const MovieBrowser: React.FC<MovieBrowserProps> = ({ 
+  searchQuery = '',
+  setSearchQuery,
   refreshTrigger = 0,
   onOpenStudioPortal 
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
    
@@ -74,9 +77,9 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
       });
   }, []);
 
-  // Search Debounce
+  // Search Debounce based on searchQuery from navbar
   useEffect(() => {
-    if (searchQuery.trim().length < 2) {
+    if (!searchQuery || searchQuery.trim().length < 2) {
       setSearchResults([]);
       return;
     }
@@ -89,7 +92,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
           setIsSearching(false);
         })
         .catch(() => setIsSearching(false));
-    }, 450);
+    }, 400);
     return () => clearTimeout(delayFn);
   }, [searchQuery]);
 
@@ -145,34 +148,9 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
   return (
     <div className="w-full h-full flex flex-col overflow-y-auto custom-scrollbar relative bg-[#0F0F0F] text-white">
       
-      {/* Global Search Header - Floating Top Right */}
-      <div className="absolute top-3 right-4 md:top-4 md:right-10 z-40 w-[200px] sm:w-[260px] md:w-[320px]">
-        <div className="relative w-full">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input 
-            type="text"
-            placeholder="Search movies, series, studios..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full bg-black/60 hover:bg-black/80 backdrop-blur-xl border border-white/10 focus:border-[#E50914] focus:bg-[#1A1A1A] rounded-full py-2 pl-9 pr-8 text-white text-xs md:text-sm outline-none transition-all placeholder-gray-400 shadow-2xl"
-          />
-          {searchQuery && (
-            <button 
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs"
-            >
-              ✕
-            </button>
-          )}
-          {isSearching && (
-            <div className="absolute right-8 top-1/2 -translate-y-1/2 w-3.5 h-3.5 border-2 border-[#E50914] border-t-transparent rounded-full animate-spin"></div>
-          )}
-        </div>
-      </div>
-
-      {/* Search Results Grid */}
+      {/* Search Results Grid (when searchQuery is active in navbar) */}
       {searchQuery.trim().length >= 2 ? (
-        <div className="px-4 md:px-10 pb-20 pt-20 md:pt-24">
+        <div className="px-4 md:px-12 pb-20 pt-24 md:pt-28 animate-in fade-in duration-300">
           {searchQuery.startsWith('magnet:?') && (
             <div className="mb-6 p-4 bg-[#1A1A1A] rounded-xl border border-[#E50914] flex flex-col sm:flex-row items-center gap-4 shadow-xl">
               <div className="flex-1 overflow-hidden w-full">
@@ -195,7 +173,14 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
               <span>Results for</span>
               <span className="text-[#E50914]">"{searchQuery}"</span>
             </h2>
-            <span className="text-xs text-gray-400 font-bold">{searchResults.length} titles found</span>
+            {isSearching ? (
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <div className="w-3.5 h-3.5 border-2 border-[#E50914] border-t-transparent rounded-full animate-spin"></div>
+                <span>Searching OMDb & Pothole network...</span>
+              </div>
+            ) : (
+              <span className="text-xs text-gray-400 font-bold">{searchResults.length} titles found</span>
+            )}
           </div>
 
           {searchResults.length > 0 ? (
@@ -245,7 +230,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
             <div className="text-center py-20">
               <Film className="w-12 h-12 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400 text-sm">No titles found for "{searchQuery}".</p>
-              <p className="text-gray-500 text-xs mt-1">Try another title or paste a magnet link.</p>
+              <p className="text-gray-500 text-xs mt-1">Try another title or paste a direct magnet link.</p>
             </div>
           ) : null}
         </div>
@@ -397,7 +382,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                                   <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shadow-md hover:scale-110 transition-transform">
                                     <Play className="w-3.5 h-3.5 fill-black ml-0.5" />
                                   </div>
-                                  <span className="text-xs font-bold text-white">Play</span>
+                                  <span className="text-xs font-bold text-white">Select Stream</span>
                                 </div>
                               </div>
                             </div>
@@ -442,7 +427,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
             <div className="absolute bottom-6 left-4 md:left-8 right-4">
               <div className="flex items-center gap-2 text-xs font-bold text-[#E50914] uppercase tracking-wider mb-1">
                 <Tv className="w-4 h-4" />
-                <span>TV Series Series Guide</span>
+                <span>TV Series Guide</span>
               </div>
               <h2 className="text-3xl md:text-5xl font-black text-white leading-tight drop-shadow-lg">{selectedSeries.title}</h2>
               <p className="text-gray-400 text-xs md:text-sm font-semibold mt-1">
@@ -476,7 +461,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
               className="bg-[#E50914] hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold text-xs md:text-sm transition-colors flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-900/40"
             >
               <Play className="w-3.5 h-3.5 fill-white" />
-              <span>Play S1E1</span>
+              <span>Select Stream S1E1</span>
             </button>
           </div>
 
@@ -593,7 +578,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                   className="flex-1 bg-[#E50914] hover:bg-red-700 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-900/40"
                 >
                   <Play className="w-4 h-4 fill-white" />
-                  <span>Start Streaming Now</span>
+                  <span>Choose Stream</span>
                 </button>
               </div>
             </div>

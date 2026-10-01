@@ -17,12 +17,16 @@ import {
   User as UserIcon,
   Sparkles,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  Search
 } from "lucide-react";
 
 export default function Home() {
   const queue = usePlayerStore(state => state.queue);
   const isPlaying = queue.length > 0;
+
+  // Search State
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Auth & Studio States
   const [user, setUser] = useState<User | null>(null);
@@ -65,7 +69,6 @@ export default function Home() {
 
   useEffect(() => {
     fetchStudioStats();
-    // Refresh stats every 15s when logged in as studio
     const interval = setInterval(fetchStudioStats, 15000);
     return () => clearInterval(interval);
   }, [fetchStudioStats]);
@@ -101,13 +104,14 @@ export default function Home() {
   return (
     <main className="w-screen h-[100dvh] flex flex-col bg-[#0F0F0F] overflow-hidden font-sans text-gray-100 select-none">
       {/* Netflix Top Navigation Bar */}
-      <nav className={`h-16 md:h-20 shrink-0 bg-gradient-to-b from-black/95 via-black/70 to-transparent flex items-center justify-between px-4 md:px-10 z-50 absolute top-0 w-full transition-all duration-300 ${isPlaying ? "bg-black/90 pointer-events-auto" : "pointer-events-none"}`}>
+      <nav className={`h-16 md:h-20 shrink-0 bg-gradient-to-b from-black/95 via-black/80 to-transparent flex items-center justify-between px-4 md:px-10 z-50 absolute top-0 w-full transition-all duration-300 ${isPlaying ? "bg-black/95 pointer-events-auto" : "pointer-events-none"}`}>
         
         {/* Brand Logo & Tag */}
-        <div className="flex items-center gap-6 pointer-events-auto">
+        <div className="flex items-center gap-4 md:gap-6 pointer-events-auto shrink-0">
           <div 
             onClick={() => {
               if (isPlaying) usePlayerStore.getState().clearQueue();
+              setSearchQuery("");
             }}
             className="flex items-center gap-2 cursor-pointer group"
           >
@@ -117,14 +121,38 @@ export default function Home() {
             <span className="font-black text-2xl md:text-3xl tracking-tighter text-[#E50914] drop-shadow-md">
               POTHOLE
             </span>
-            <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-white/10 text-gray-300 border border-white/10">
+            <span className="hidden lg:inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-white/10 text-gray-300 border border-white/10">
               STUDIOS
             </span>
           </div>
         </div>
 
+        {/* Global Netflix Search Input in Navbar */}
+        {!isPlaying && (
+          <div className="flex-1 max-w-xs sm:max-w-sm md:max-w-md mx-3 sm:mx-6 pointer-events-auto">
+            <div className="relative w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text"
+                placeholder="Search movies, series, studios..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-black/60 hover:bg-black/80 focus:bg-[#1A1A1A] border border-white/20 focus:border-[#E50914] rounded-full py-1.5 md:py-2 pl-9 pr-8 text-white text-xs md:text-sm outline-none transition-all placeholder-gray-400 shadow-xl"
+              />
+              {searchQuery && (
+                <button 
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Right Action Bar */}
-        <div className="flex items-center gap-3 md:gap-4 pointer-events-auto">
+        <div className="flex items-center gap-2 md:gap-4 pointer-events-auto shrink-0">
           {isPlaying ? (
             <button 
               onClick={() => usePlayerStore.getState().clearQueue()}
@@ -156,8 +184,8 @@ export default function Home() {
                     className="bg-gradient-to-r from-[#E50914] to-red-800 hover:from-red-600 hover:to-red-700 text-white text-xs md:text-sm font-bold px-3.5 py-2 rounded-lg transition-all shadow-lg shadow-red-900/40 flex items-center gap-2 cursor-pointer border border-red-500/30"
                   >
                     <Building2 className="w-4 h-4 shrink-0" />
-                    <span className="hidden sm:inline">{user.full_name || "Studio Hub"}</span>
-                    <span className="sm:hidden">Studio</span>
+                    <span className="hidden md:inline">{user.full_name || "Studio Hub"}</span>
+                    <span className="md:hidden">Studio</span>
                   </button>
                 </div>
               ) : (
@@ -189,10 +217,10 @@ export default function Home() {
               ) : (
                 <button
                   onClick={() => setIsAuthOpen(true)}
-                  className="bg-white/10 hover:bg-white/20 text-white text-xs md:text-sm font-bold px-4 py-2 rounded-lg transition-all border border-white/15 backdrop-blur-md flex items-center gap-2 cursor-pointer"
+                  className="bg-white/10 hover:bg-white/20 text-white text-xs md:text-sm font-bold px-3.5 sm:px-4 py-2 rounded-lg transition-all border border-white/15 backdrop-blur-md flex items-center gap-2 cursor-pointer"
                 >
                   <LogIn className="w-4 h-4" />
-                  <span>Sign In</span>
+                  <span className="hidden sm:inline">Sign In</span>
                 </button>
               )}
             </>
@@ -206,6 +234,8 @@ export default function Home() {
         {!isPlaying && (
           <div className="w-full h-full flex flex-col bg-[#0F0F0F] z-10 animate-in fade-in duration-500">
             <MovieBrowser 
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
               refreshTrigger={refreshTrigger}
               onOpenStudioPortal={() => {
                 if (user?.role === "studio") {

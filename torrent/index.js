@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
 
 const app = express();
@@ -12,17 +11,13 @@ const lastActivity = {};
 let WebTorrent;
 let client;
 
-// Local fallback video for restricted/firewalled networks (e.g. college Wi-Fi DPI blocking P2P)
-const FALLBACK_VIDEO_PATH = '/home/divyansh_1410/marvel.mp4';
-
+// Initialize WebTorrent via dynamic import to bypass ESM require restrictions
 (async () => {
     try {
         const wtModule = await import('webtorrent');
         WebTorrent = wtModule.default;
         client = new WebTorrent({
-            maxConns: 200,
-            dht: true,
-            tracker: true
+            maxConns: 200 // Max connections for fast seeking and swarm discovery
         });
         
         const PORT = process.env.PORT || 3005;
@@ -32,63 +27,22 @@ const FALLBACK_VIDEO_PATH = '/home/divyansh_1410/marvel.mp4';
     }
 })();
 
-// Stream a local file with full RFC 7233 HTTP 206 byte-range seeking support
-function streamLocalFile(filePath, req, res) {
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).send('Fallback video not found');
-    }
-
-    const stat = fs.statSync(filePath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-
-    if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunksize = (end - start) + 1;
-        const fileStream = fs.createReadStream(filePath, { start, end });
-
-        res.writeHead(206, {
-            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': chunksize,
-            'Content-Type': 'video/mp4',
-        });
-        fileStream.pipe(res);
-    } else {
-        res.writeHead(200, {
-            'Content-Length': fileSize,
-            'Accept-Ranges': 'bytes',
-            'Content-Type': 'video/mp4',
-        });
-        fs.createReadStream(filePath).pipe(res);
-    }
-}
-
 app.get('/stats', (req, res) => {
     const magnet = req.query.magnet;
     if (!magnet) return res.status(400).send('Magnet required');
     
     lastActivity[magnet] = Date.now();
+    
     const torrent = activeEngines[magnet];
-
-    // If torrent is actively connected to swarm, return real peer numbers
-    if (torrent && torrent.numPeers > 0) {
-        return res.json({
-            peers: torrent.numPeers,
-            speed: torrent.downloadSpeed,
-            downloaded: torrent.downloaded,
-            progress: torrent.progress
-        });
+    if (!torrent) {
+        return res.json({ peers: 0, speed: 0, downloaded: 0, progress: 0 });
     }
     
-    // In restricted/firewalled network mode, report simulated swarm health
-    return res.json({
-        peers: 48,
-        speed: 4850000 + Math.floor(Math.random() * 500000), // ~5 MB/s
-        downloaded: 104857600,
-        progress: 0.85
+    res.json({
+        peers: torrent.numPeers || 0,
+        speed: torrent.downloadSpeed || 0,
+        downloaded: torrent.downloaded || 0,
+        progress: torrent.progress || 0
     });
 });
 
@@ -97,35 +51,28 @@ app.get('/stream', (req, res) => {
     if (!magnet) return res.status(400).send('Magnet required');
 
     lastActivity[magnet] = Date.now();
-
-    // Instant response for HEAD checks so Next.js proxy never times out
-    if (req.method === 'HEAD') {
-        const stat = fs.existsSync(FALLBACK_VIDEO_PATH) ? fs.statSync(FALLBACK_VIDEO_PATH) : null;
-        res.writeHead(200, {
-            'Content-Length': stat ? stat.size : 4850000,
-            'Content-Type': 'video/mp4',
-            'Accept-Ranges': 'bytes'
-        });
-        return res.end();
-    }
-
     let torrent = activeEngines[magnet];
 
-    const handleTorrentStream = (torrent) => {
+    // Function to handle the stream once the torrent is ready
+    const handleStream = (torrent) => {
         let file;
         const fileIdx = req.query.fileIdx;
+        
         if (fileIdx !== undefined && !isNaN(parseInt(fileIdx)) && torrent.files[parseInt(fileIdx)]) {
             file = torrent.files[parseInt(fileIdx)];
         }
+        
+        // Fallback to largest video file if fileIdx is invalid or not provided
         if (!file && torrent.files && torrent.files.length > 0) {
             file = torrent.files.reduce((a, b) => a.length > b.length ? a : b);
         }
 
         if (!file) {
-            console.log('No video file in torrent, using fallback stream');
-            return streamLocalFile(FALLBACK_VIDEO_PATH, req, res);
+            return res.status(503).send('Torrent metadata still loading files...');
         }
-
+        
+        console.log('Streaming torrent file:', file.name, 'Size:', file.length);
+        
         const ext = path.extname(file.name).toLowerCase();
         let contentType = 'video/mp4';
         if (ext === '.mkv') contentType = 'video/x-matroska';
@@ -139,9 +86,19 @@ app.get('/stream', (req, res) => {
                 'Content-Type': contentType,
                 'Accept-Ranges': 'bytes'
             });
+            if (req.method === 'HEAD') {
+                return res.end();
+            }
             const stream = file.createReadStream();
+            stream.on('error', (err) => { console.log('Stream error:', err.message); });
+            
+            const activityInterval = setInterval(() => { lastActivity[magnet] = Date.now(); }, 5000);
             stream.pipe(res);
-            req.on('close', () => stream.destroy());
+            
+            req.on('close', () => {
+                clearInterval(activityInterval);
+                stream.destroy();
+            });
             return;
         }
 
@@ -151,23 +108,40 @@ app.get('/stream', (req, res) => {
         const chunksize = (end - start) + 1;
 
         res.writeHead(206, {
-            'Content-Range': `bytes ${start}-${end}/${file.length}`,
+            'Content-Range': 'bytes ' + start + '-' + end + '/' + file.length,
             'Accept-Ranges': 'bytes',
             'Content-Length': chunksize,
             'Content-Type': contentType
         });
+        
+        if (req.method === 'HEAD') {
+            return res.end();
+        }
 
-        const stream = file.createReadStream({ start, end });
+        const stream = file.createReadStream({ start: start, end: end });
+        stream.on('error', (err) => { console.log('Stream error:', err.message); });
+        
+        const activityInterval = setInterval(() => { lastActivity[magnet] = Date.now(); }, 5000);
         stream.pipe(res);
-        req.on('close', () => stream.destroy());
+        
+        req.on('close', () => {
+            clearInterval(activityInterval);
+            stream.destroy();
+        });
     };
 
-    if (torrent && torrent.ready) {
-        return handleTorrentStream(torrent);
-    }
-
-    if (!torrent && client) {
-        console.log('Initiating WebTorrent for:', magnet);
+    if (torrent) {
+        if (torrent.ready) {
+            handleStream(torrent);
+        } else {
+            if (req.method === 'HEAD') {
+                // If HEAD probe arrives before torrent is ready, return 503 so client polls again
+                return res.status(503).send('Torrent initializing swarm...');
+            }
+            torrent.once('ready', () => handleStream(torrent));
+        }
+    } else {
+        console.log('Starting WebTorrent engine for:', magnet);
         const trackers = [
             'http://tracker.opentrackr.org:1337/announce',
             'udp://tracker.opentrackr.org:1337/announce',
@@ -175,10 +149,14 @@ app.get('/stream', (req, res) => {
             'udp://tracker.openbittorrent.com:6969/announce',
             'udp://open.stealth.si:80/announce',
             'udp://tracker.torrent.eu.org:451/announce',
+            'http://tracker.dler.org:6969/announce',
+            'http://004430.xyz:80/announce',
+            'http://tracker.renfei.net:8080/announce',
             'wss://tracker.openwebtorrent.com',
-            'wss://tracker.webtorrent.dev'
+            'wss://tracker.webtorrent.dev',
+            'wss://tracker.btorrent.xyz'
         ];
-
+        
         let enhancedMagnet = magnet;
         trackers.forEach(t => {
             if (!enhancedMagnet.includes(encodeURIComponent(t))) {
@@ -186,51 +164,52 @@ app.get('/stream', (req, res) => {
             }
         });
 
-        try {
-            torrent = client.add(enhancedMagnet, { path: '/tmp/torrents', announce: trackers });
+        if (client) {
+            torrent = client.add(enhancedMagnet, {
+                path: '/tmp/torrents',
+                announce: trackers
+            }, (t) => {
+                console.log('WebTorrent engine ready for:', t.infoHash, 'Name:', t.name);
+                handleStream(t);
+            });
+            
             activeEngines[magnet] = torrent;
 
             torrent.on('wire', (wire, addr) => {
-                console.log(`[Swarm] Connected peer: ${addr} for ${torrent.infoHash}. Total peers: ${torrent.numPeers}`);
+                console.log(`[Swarm] Connected to peer: ${addr} for torrent: ${torrent.infoHash}. Total peers: ${torrent.numPeers}`);
             });
-
+            
             torrent.on('error', (err) => {
-                console.warn('Torrent warning:', err.message);
+                console.error('Torrent error:', err.message);
+                delete activeEngines[magnet];
             });
-        } catch (e) {
-            console.warn('WebTorrent add error:', e.message);
-        }
-    }
 
-    // If torrent is not ready within 3 seconds (e.g. firewalled network), stream fallback immediately so user gets instant playback
-    let handled = false;
-    const fallbackTimer = setTimeout(() => {
-        if (!handled && (!torrent || !torrent.ready)) {
-            handled = true;
-            console.log('Swarm blocked by local network firewall or resolving. Serving high-speed stream fallback.');
-            streamLocalFile(FALLBACK_VIDEO_PATH, req, res);
-        }
-    }, 3000);
-
-    if (torrent) {
-        torrent.once('ready', () => {
-            if (!handled) {
-                handled = true;
-                clearTimeout(fallbackTimer);
-                handleTorrentStream(torrent);
+            if (req.method === 'HEAD') {
+                return res.status(503).send('Torrent initializing swarm...');
             }
-        });
+            torrent.once('ready', () => handleStream(torrent));
+        } else {
+            res.status(500).send('WebTorrent client not initialized');
+        }
     }
 });
 
-// Periodic cleanup
+// Cleanup idle torrents every 5 minutes
 setInterval(() => {
     const now = Date.now();
     for (const magnet in activeEngines) {
         if (now - lastActivity[magnet] > 10 * 60 * 1000) {
+            console.log('Cleaning up idle torrent to free disk space:', magnet);
             const torrent = activeEngines[magnet];
             if (torrent) {
-                try { torrent.destroy(); } catch {}
+                try {
+                    torrent.destroy({ destroyStore: true }, (err) => {
+                        if (err) console.error('Failed to destroy store:', err);
+                        else console.log('Successfully wiped torrent cache for:', magnet);
+                    });
+                } catch (e) {
+                    console.error('Destroy error:', e);
+                }
             }
             delete activeEngines[magnet];
             delete lastActivity[magnet];
