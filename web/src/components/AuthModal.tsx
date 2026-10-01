@@ -8,12 +8,14 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: (user: User, token: string) => void;
+  promptMessage?: string | null;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
+  promptMessage,
 }) => {
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
@@ -86,6 +88,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Form Body */}
         <div className="p-6 space-y-6">
+          {promptMessage && !errorMsg && (
+            <div className="p-3.5 bg-red-950/40 border border-red-700/50 rounded-xl text-red-200 text-xs flex items-center gap-2.5 shadow-inner">
+              <Lock className="w-4 h-4 shrink-0 text-[#E50914]" />
+              <span className="font-medium">{promptMessage}</span>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3.5 bg-red-950/50 border border-red-800/60 rounded-xl text-red-200 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />

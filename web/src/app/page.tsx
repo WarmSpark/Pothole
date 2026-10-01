@@ -32,6 +32,7 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [authPromptMessage, setAuthPromptMessage] = useState<string | null>(null);
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [studioEarnings, setStudioEarnings] = useState<number>(0);
   const [claimedTitlesCount, setClaimedTitlesCount] = useState<number>(0);
@@ -76,6 +77,7 @@ export default function Home() {
   const handleLoginSuccess = (loggedInUser: User, accessToken: string) => {
     setUser(loggedInUser);
     setToken(accessToken);
+    setAuthPromptMessage(null);
     if (typeof window !== "undefined") {
       localStorage.setItem("pothole_token", accessToken);
       localStorage.setItem("pothole_user", JSON.stringify(loggedInUser));
@@ -90,6 +92,7 @@ export default function Home() {
     setToken(null);
     setStudioEarnings(0);
     setClaimedTitlesCount(0);
+    usePlayerStore.getState().clearQueue();
     if (typeof window !== "undefined") {
       localStorage.removeItem("pothole_token");
       localStorage.removeItem("pothole_user");
@@ -237,10 +240,16 @@ export default function Home() {
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
               refreshTrigger={refreshTrigger}
+              isLoggedIn={!!user}
+              onRequireAuth={(msg) => {
+                setAuthPromptMessage(msg || "Sign in with a Viewer or Studio account to watch movies and series.");
+                setIsAuthOpen(true);
+              }}
               onOpenStudioPortal={() => {
                 if (user?.role === "studio") {
                   setIsStudioOpen(true);
                 } else {
+                  setAuthPromptMessage("Sign in with a Studio account to access the Production Studio Portal.");
                   setIsAuthOpen(true);
                 }
               }}
@@ -251,7 +260,13 @@ export default function Home() {
         {/* Torrent Video Player (Full Viewport on play) */}
         {isPlaying && (
           <div className="w-full h-full flex flex-col bg-black relative z-20 animate-in slide-in-from-bottom-6 fade-in duration-400 shadow-2xl">
-            <Player />
+            <Player 
+              isLoggedIn={!!user}
+              onRequireAuth={() => {
+                setAuthPromptMessage("Sign in with a Viewer or Studio account to stream movies.");
+                setIsAuthOpen(true);
+              }}
+            />
           </div>
         )}
       </div>
@@ -259,7 +274,11 @@ export default function Home() {
       {/* Authentication Modal */}
       <AuthModal 
         isOpen={isAuthOpen}
-        onClose={() => setIsAuthOpen(false)}
+        onClose={() => {
+          setIsAuthOpen(false);
+          setAuthPromptMessage(null);
+        }}
+        promptMessage={authPromptMessage}
         onLoginSuccess={handleLoginSuccess}
       />
 

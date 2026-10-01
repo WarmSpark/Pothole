@@ -15,7 +15,8 @@ import {
   ChevronRight, 
   ArrowLeft,
   Tv,
-  Film
+  Film,
+  Lock
 } from 'lucide-react';
 
 interface MovieBrowserProps {
@@ -23,13 +24,17 @@ interface MovieBrowserProps {
   setSearchQuery?: (q: string) => void;
   refreshTrigger?: number;
   onOpenStudioPortal?: () => void;
+  isLoggedIn?: boolean;
+  onRequireAuth?: (msg?: string) => void;
 }
 
 export const MovieBrowser: React.FC<MovieBrowserProps> = ({ 
   searchQuery = '',
   setSearchQuery,
   refreshTrigger = 0,
-  onOpenStudioPortal 
+  onOpenStudioPortal,
+  isLoggedIn = false,
+  onRequireAuth
 }) => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -109,6 +114,10 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
   };
 
   const handleSelectMovieOrSeries = (item: any) => {
+    if (!isLoggedIn) {
+      onRequireAuth?.("Sign in with a Viewer or Studio account to watch movies and series.");
+      return;
+    }
     if (item.type === 'series') {
       setSelectedSeries(item);
       setSeriesDetails(null);
@@ -119,6 +128,10 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
   };
 
   const handlePlay = (item: any, s?: number, e?: number, epTitle?: string) => {
+    if (!isLoggedIn) {
+      onRequireAuth?.("Sign in with a Viewer or Studio account to watch movies and series.");
+      return;
+    }
     usePlayerStore.getState().addToQueue({
       id: Math.random().toString(),
       type: item.type,
@@ -305,8 +318,17 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
                         onClick={() => handleSelectMovieOrSeries(heroItem)}
                         className="bg-white hover:bg-gray-200 text-black px-7 py-3 rounded-lg font-black text-sm md:text-base transition-transform active:scale-95 flex items-center gap-2 cursor-pointer shadow-xl"
                       >
-                        <Play className="w-5 h-5 fill-black" />
-                        Play Now
+                        {isLoggedIn ? (
+                          <>
+                            <Play className="w-5 h-5 fill-black" />
+                            <span>Play Now</span>
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-4 h-4 text-black" />
+                            <span>Sign In to Watch</span>
+                          </>
+                        )}
                       </button>
 
                       <button 

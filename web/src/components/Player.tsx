@@ -4,8 +4,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { TorrentPlayer } from './TorrentPlayer';
 import { api } from '../api';
+import { Lock } from 'lucide-react';
 
-export const Player = () => {
+interface PlayerProps {
+  isLoggedIn?: boolean;
+  onRequireAuth?: () => void;
+}
+
+export const Player: React.FC<PlayerProps> = ({ isLoggedIn = true, onRequireAuth }) => {
   const queue = usePlayerStore(state => state.queue);
   const isPlaying = usePlayerStore(state => state.isPlaying);
   const [mounted, setMounted] = useState(false);
@@ -129,6 +135,37 @@ export const Player = () => {
   }, [magnetLink, currentItem]);
 
   if (!mounted) return null;
+
+  if (!isLoggedIn) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-[#0F0F0F] text-white p-6 text-center animate-in fade-in">
+        <div className="w-16 h-16 rounded-full bg-red-950/80 border border-red-500/40 flex items-center justify-center mb-4 shadow-lg shadow-red-950/50">
+          <Lock className="w-8 h-8 text-[#E50914]" />
+        </div>
+        <h2 className="text-2xl font-black mb-2 tracking-tight">Member Sign In Required</h2>
+        <p className="text-gray-400 max-w-md mb-6 text-sm">
+          You must be signed in with a Viewer or Studio account to stream movies and series on Pothole.
+        </p>
+        <div className="flex gap-4">
+          <button 
+            onClick={() => {
+              usePlayerStore.getState().clearQueue();
+              onRequireAuth?.();
+            }}
+            className="bg-[#E50914] hover:bg-red-700 text-white font-bold px-6 py-2.5 rounded-lg shadow-lg cursor-pointer transition-all"
+          >
+            Sign In to Watch
+          </button>
+          <button 
+            onClick={() => usePlayerStore.getState().clearQueue()}
+            className="bg-white/10 hover:bg-white/20 text-white font-bold px-4 py-2.5 rounded-lg cursor-pointer transition-all border border-white/10"
+          >
+            Back to Catalog
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!currentItem) {
     return (
