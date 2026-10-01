@@ -1,8 +1,30 @@
+# Node
 node_modules/
-.env
+**/node_modules/
 .next/
-*.tar.gz
+**/.next/
+build_final/
+**/build_final/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.sqlite3
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs & temp
+*.log
 ngrok.log
+*.tar.gz
 .DS_Store
+
+# Legacy / mobile
 desktop/
 mobile/
