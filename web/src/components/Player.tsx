@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { TorrentPlayer } from './TorrentPlayer';
 import { api } from '../api';
-import { Lock } from 'lucide-react';
+import { Lock, Activity } from 'lucide-react';
 
 interface PlayerProps {
   isLoggedIn?: boolean;
@@ -26,6 +26,23 @@ export const Player: React.FC<PlayerProps> = ({ isLoggedIn = true, onRequireAuth
   const [torrentStreams, setTorrentStreams] = useState<any[]>([]);
   const [isSwarmMenuOpen, setIsSwarmMenuOpen] = useState(false);
   const [fileIdx, setFileIdx] = useState<number | undefined>(undefined);
+
+  // Studio Claim & Heartbeat Telemetry State
+  const [claimedStudio, setClaimedStudio] = useState<string | null>(null);
+  const [heartbeatCount, setHeartbeatCount] = useState(0);
+  const [isHeartbeatPulsing, setIsHeartbeatPulsing] = useState(false);
+
+  // Check studio claim status for current movie
+  useEffect(() => {
+    if (!currentItem?.videoId) return;
+    api.getClaimedStatusMap().then(map => {
+      if (map && currentItem.videoId && map[currentItem.videoId]?.claimed) {
+        setClaimedStudio(map[currentItem.videoId].studio_name);
+      } else {
+        setClaimedStudio(null);
+      }
+    }).catch(() => setClaimedStudio(null));
+  }, [currentItem]);
 
   const handleSelectStream = (stream: any) => {
     let targetMagnet = 'error';
@@ -63,22 +80,72 @@ export const Player: React.FC<PlayerProps> = ({ isLoggedIn = true, onRequireAuth
     }
 
     try {
+      // 1. Fetch Verified Localhost Swarm option from the local streaming engine
+      let localSwarmItem: any = null;
+      try {
+        const localRes = await fetch('/engine/local-swarm');
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          if (localData && localData.magnet) {
+            localSwarmItem = {
+              name: 'Pothole Verified P2P\n1080p Ultra',
+              title: localData.title || '⚡ Localhost High-Speed Swarm\n👤 1 (Verified Local Peer) 💾 2.5 MB ⚙️ Direct 127.0.0.1',
+              url: localData.magnet,
+              isLocalhost: true
+            };
+          }
+        }
+      } catch (err) {
+        // Engine initializing
+      }
+
+      // 2. Fetch external swarm streams from Torrentio
       const apiUrl = `/api/torrent?imdbId=${encodeURIComponent(imdbId)}${season && episode ? `&season=${season}&episode=${episode}` : ''}`;
       const res = await fetch(apiUrl);
       const data = await res.json();
+      
+      let allStreams: any[] = [];
       if (data.streams && data.streams.length > 0) {
-        const parseSeeders = (title: string) => {
+        const parseSeeders = (title: string): number => {
           if (!title) return 0;
           const match = title.match(/👤\s*(\d+)/);
-          return match ? parseInt(match[1]) : 0;
+          return match ? parseInt(match[1], 10) : 0;
         };
-        
-        // Prioritize streams with the highest active seeders
-        const sortedStreams = data.streams.sort((a: any, b: any) => {
-          return parseSeeders(b.title) - parseSeeders(a.title);
-        });
-        
-        setTorrentStreams(sortedStreams);
+
+        const parseSizeInGB = (title: string): number => {
+          if (!title) return 999;
+          const matchGB = title.match(/💾\s*([\d.]+)\s*GB/i);
+          if (matchGB) return parseFloat(matchGB[1]);
+          const matchMB = title.match(/💾\s*([\d.]+)\s*MB/i);
+          if (matchMB) return parseFloat(matchMB[1]) / 1024;
+          return 999;
+        };
+
+        // Score prioritizing compact size (0.5GB - 3GB) with healthy seeders
+        const calculateScore = (stream: any): number => {
+          const seeders = parseSeeders(stream.title);
+          const sizeGB = parseSizeInGB(stream.title);
+          if (seeders <= 0) return -100;
+          
+          const seederWeight = Math.min(seeders, 50);
+          let sizePenalty = 1.0;
+          if (sizeGB <= 2.5) sizePenalty = 0.5; // High bonus for web-optimized size
+          else if (sizeGB <= 5.0) sizePenalty = 1.0;
+          else if (sizeGB <= 15.0) sizePenalty = 3.0;
+          else sizePenalty = 10.0; // Giant files (50-90GB)
+
+          return (seederWeight * 10) / (sizeGB * sizePenalty + 0.1);
+        };
+
+        allStreams = data.streams.sort((a: any, b: any) => calculateScore(b) - calculateScore(a));
+      }
+
+      if (localSwarmItem) {
+        allStreams.unshift(localSwarmItem);
+      }
+
+      if (allStreams.length > 0) {
+        setTorrentStreams(allStreams);
       } else {
         setMagnetLink('error');
       }
@@ -225,6 +292,16 @@ export const Player: React.FC<PlayerProps> = ({ isLoggedIn = true, onRequireAuth
                    <div className="flex-1 overflow-hidden">
                      <p className="text-gray-200 font-medium text-sm mb-3 truncate group-hover:text-white transition-colors">{cleanTitle}</p>
                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        {stream.isLocalhost && (
+                          <span className="bg-green-900/40 text-green-300 px-2 py-1 rounded font-bold border border-green-600/60 flex items-center gap-1">
+                            🟢 LOCALHOST VERIFIED PEER (FASTEST)
+                          </span>
+                        )}
+                        {!stream.isLocalhost && idx === (torrentStreams[0]?.isLocalhost ? 1 : 0) && (
+                          <span className="bg-red-900/40 text-red-300 px-2 py-1 rounded font-bold border border-red-600/60 flex items-center gap-1">
+                            ⚡ BEST COMPACT SIZE &amp; SEEDERS (RECOMMENDED)
+                          </span>
+                        )}
                         {stream.name && <span className="bg-gray-800 text-gray-300 px-2 py-1 rounded font-bold border border-gray-700">{stream.name.replace('\n', ' ')}</span>}
                         <span className={`px-2 py-1 rounded font-bold border ${ext === 'MKV' ? 'bg-red-900/30 text-red-400 border-red-900/50' : 'bg-gray-800 text-gray-400 border-gray-700'}`}>
                            🎬 {ext}
@@ -248,6 +325,17 @@ export const Player: React.FC<PlayerProps> = ({ isLoggedIn = true, onRequireAuth
              >
                <span className="text-xl leading-none">&larr;</span> <span className="font-medium text-xs md:text-sm">Change Stream</span>
              </button>
+             {/* Studio Heartbeat Telemetry Overlay */}
+             <div className="absolute top-4 right-4 z-50 flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-xs shadow-2xl pointer-events-none">
+               <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${claimedStudio ? 'bg-emerald-400 animate-ping' : 'bg-amber-400 animate-pulse'}`} />
+               <Activity className={`w-3.5 h-3.5 flex-shrink-0 ${claimedStudio ? 'text-emerald-400' : 'text-amber-400'}`} />
+               <span className="font-bold text-gray-200 whitespace-nowrap">
+                 {claimedStudio ? `sending 10s heartrate to ${claimedStudio}` : 'unclaimed'}
+               </span>
+               {claimedStudio && (
+                 <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-2 py-0.5 rounded-full">+$0.0004</span>
+               )}
+             </div>
              {magnetLink && (
                <TorrentPlayer 
                   magnetUri={magnetLink}

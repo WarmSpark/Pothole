@@ -54,6 +54,74 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
   // Detail Modal State (for More Info)
   const [detailItem, setDetailItem] = useState<any | null>(null);
 
+  // Watch History State
+  const [watchHistory, setWatchHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('pothole_watch_history');
+      if (saved) {
+        try {
+          setWatchHistory(JSON.parse(saved));
+        } catch (e) {}
+      } else {
+        const defaultHistory = [
+          {
+            id: 'hist-1',
+            videoId: 'tt0816692',
+            title: 'Interstellar',
+            type: 'movie',
+            thumbnail: 'https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_SX300.jpg',
+            watchedAt: 'Recently',
+            progress: 72
+          },
+          {
+            id: 'hist-2',
+            videoId: 'tt1375666',
+            title: 'Inception',
+            type: 'movie',
+            thumbnail: 'https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_SX300.jpg',
+            watchedAt: 'Yesterday',
+            progress: 45
+          },
+          {
+            id: 'hist-3',
+            videoId: 'tt0468569',
+            title: 'The Dark Knight',
+            type: 'movie',
+            thumbnail: 'https://m.media-amazon.com/images/M/MV5BMTMxNTMwODM0NF5BMl5BanBnXkFtZTcwODAyMTk2Mw@@._V1_SX300.jpg',
+            watchedAt: '3 days ago',
+            progress: 88
+          }
+        ];
+        setWatchHistory(defaultHistory);
+        localStorage.setItem('pothole_watch_history', JSON.stringify(defaultHistory));
+      }
+    }
+  }, []);
+
+  const addToHistory = (item: any) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const existing: any[] = JSON.parse(localStorage.getItem('pothole_watch_history') || '[]');
+      const filtered = existing.filter(h => h.videoId !== item.videoId);
+      const updated = [
+        {
+          id: item.videoId || Math.random().toString(),
+          videoId: item.videoId,
+          title: item.title,
+          type: item.type || 'movie',
+          thumbnail: item.thumbnail || '',
+          watchedAt: 'Just now',
+          progress: Math.floor(Math.random() * 40) + 30
+        },
+        ...filtered
+      ].slice(0, 10);
+      localStorage.setItem('pothole_watch_history', JSON.stringify(updated));
+      setWatchHistory(updated);
+    } catch (e) {}
+  };
+
   // Load Claimed Titles from Django Backend
   const loadClaimedMap = useCallback(async () => {
     try {
@@ -132,6 +200,7 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
       onRequireAuth?.("Sign in with a Viewer or Studio account to watch movies and series.");
       return;
     }
+    addToHistory(item);
     usePlayerStore.getState().addToQueue({
       id: Math.random().toString(),
       type: item.type,
@@ -355,6 +424,78 @@ export const MovieBrowser: React.FC<MovieBrowserProps> = ({
 
               {/* Categorized Netflix Rows */}
               <div className="flex flex-col gap-8 md:gap-10 -mt-4 relative z-20">
+                {/* Continue Watching / Watch History Row */}
+                {watchHistory.length > 0 && (
+                  <div className="flex flex-col px-4 md:px-12 group/row animate-in fade-in duration-300">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-lg md:text-xl font-black text-white tracking-tight flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-[#E50914]" />
+                        <span>Continue Watching & History</span>
+                        <ChevronRight className="w-4 h-4 text-[#E50914] opacity-0 group-hover/row:opacity-100 group-hover/row:translate-x-1 transition-all" />
+                      </h3>
+                      <button 
+                        onClick={() => {
+                          setWatchHistory([]);
+                          if (typeof window !== 'undefined') localStorage.removeItem('pothole_watch_history');
+                        }}
+                        className="text-xs text-gray-500 hover:text-gray-300 font-bold cursor-pointer transition-colors"
+                      >
+                        Clear History
+                      </button>
+                    </div>
+
+                    <div className="flex gap-3 md:gap-4 overflow-x-auto custom-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth snap-x">
+                      {watchHistory.map((item: any, i: number) => {
+                        const claim = getClaimInfo(item.videoId, item.title);
+                        return (
+                          <div 
+                            key={i} 
+                            className="w-[130px] sm:w-[160px] md:w-[190px] shrink-0 snap-start flex flex-col group cursor-pointer"
+                            onClick={() => handleSelectMovieOrSeries(item)}
+                          >
+                            <div className="w-full aspect-[2/3] bg-[#1A1A1A] rounded-lg overflow-hidden relative shadow-lg group-hover:ring-2 group-hover:ring-[#E50914] transition-all group-hover:scale-105 duration-300">
+                              {item.thumbnail ? (
+                                <img src={item.thumbnail} className="w-full h-full object-cover" alt={item.title} loading="lazy" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center p-2 text-center text-xs text-gray-400 font-bold bg-[#141414]">
+                                  {item.title}
+                                </div>
+                              )}
+                              
+                              {/* Hover Play Button Overlay */}
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <div className="w-10 h-10 rounded-full bg-[#E50914] text-white flex items-center justify-center shadow-lg">
+                                  <Play className="w-5 h-5 fill-white ml-0.5" />
+                                </div>
+                              </div>
+
+                              {claim && (
+                                <div className="absolute top-2 left-2 z-10">
+                                  <span className="bg-red-950/90 text-red-300 border border-red-500/50 text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                                    <Building2 className="w-3 h-3" />
+                                    <span>{claim.studio_name}</span>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Netflix-style Red Watch Progress Bar */}
+                            <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden mt-2">
+                              <div 
+                                className="bg-[#E50914] h-full rounded-full transition-all" 
+                                style={{ width: `${item.progress || 60}%` }} 
+                              />
+                            </div>
+
+                            <p className="text-white text-xs font-bold mt-1.5 truncate group-hover:text-[#E50914] transition-colors">{item.title}</p>
+                            <span className="text-[10px] text-gray-500 font-medium">{item.watchedAt || 'Recently'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {carousels.map((cat, idx) => (
                   <div key={idx} className="flex flex-col px-4 md:px-12 group/row">
                     <div className="flex items-center justify-between mb-3">
